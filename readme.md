@@ -538,9 +538,10 @@ Now every push to `main` automatically triggers the pipeline.
 
 ```bash
 eksctl create cluster \
-  --name Castro-Cluster \
-  --region ap-northeast-1 \
-  --zones ap-northeast-1a,ap-northeast-1b
+--name cluster-1 \
+--region ap-south-1 \
+--node-type t3.micro \
+--nodes 2
 ```
 
 > ⏳ Wait approximately **20 minutes** — do not close the terminal.
@@ -556,28 +557,8 @@ eksctl utils associate-iam-oidc-provider \
   --region ap-northeast-1
 ```
 
-### Create Node Group
 
-```bash
-eksctl create nodegroup \
-  --cluster=Castro-Cluster \
-  --region=ap-northeast-1 \
-  --name=Castro-demo-NG \
-  --node-type=t2.medium \
-  --nodes=2 \
-  --nodes-min=2 \
-  --nodes-max=4 \
-  --node-volume-size=20 \
-  --ssh-access \
-  --ssh-public-key=<your-pem-key-name>
 ```
-
-> ⏳ Wait approximately **10–15 minutes**.
-
-### Connect kubectl
-
-```bash
-aws eks update-kubeconfig --name Castro-Cluster --region ap-northeast-1
 kubectl get nodes
 ```
 
@@ -587,9 +568,10 @@ Expected: Two nodes with status `Ready`.
 
 ```bash
 cd Zomato
-kubectl apply -f kubernetes/deployment.yml
-kubectl apply -f kubernetes/service.yml
-kubectl apply -f kubernetes/hpa.yml
+cd Kubernetes/
+kubectl apply -f deployment.yml
+kubectl apply -f service.yaml
+kubectl apply -f hpa.yaml
 kubectl get pods
 kubectl get svc
 ```
