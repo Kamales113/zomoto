@@ -63,6 +63,8 @@ Prometheus + Grafana Monitoring
 
 ### Step 1 — Fork the Repository
 
+Create a EC2 instance sperately
+
 1. Go to: https://github.com/thecareerbeer/Zomato
 2. Click **Fork** → fork to your own GitHub account
 3. Clone your fork:
@@ -73,6 +75,10 @@ cd Zomato
 ```
 
 ### Step 2 — Write the Dockerfile
+```
+ls
+nano Dockerfile
+```
 
 Create `Dockerfile` in the root of the project:
 
@@ -97,7 +103,7 @@ CMD ["npm", "start"]
 Create a `kubernetes/` folder:
 
 ```bash
-mkdir kubernetes
+cd kubernetes
 ```
 
 **`kubernetes/deployment.yml`**
@@ -107,7 +113,6 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: zomato
-  namespace: default
   labels:
     app: zomato
 spec:
@@ -121,36 +126,29 @@ spec:
         app: zomato
     spec:
       containers:
-        - name: zomato
-          image: <your-dockerhub-username>/zomato:latest
-          ports:
-            - containerPort: 3000
-          resources:
-            requests:
-              memory: "128Mi"
-              cpu: "250m"
-            limits:
-              memory: "256Mi"
-              cpu: "500m"
+      - name: zomato
+        image: kastrov/zomato:latest
+        ports:
+        - containerPort: 3000
 ```
 
 **`kubernetes/service.yml`**
 
 ```yaml
+
 apiVersion: v1
 kind: Service
 metadata:
-  name: zomato-service
-  namespace: default
+  name: zomato
 spec:
-  type: NodePort
   selector:
     app: zomato
   ports:
     - protocol: TCP
-      port: 80
+      port: 3000
       targetPort: 3000
-      nodePort: 30001
+  type: LoadBalancer
+
 ```
 
 **`kubernetes/hpa.yml`** _(Auto-scaling — required by capstone)_
@@ -191,7 +189,8 @@ pipeline {
     }
 
     environment {
-        DOCKER_IMAGE = "<your-dockerhub-username>/zomato"
+        DOCKER_IMAGE = "kamales113/zomato"
+        SCANNER_HOME = tool 'sonar-scanner'
     }
 
     stages {
@@ -205,7 +204,26 @@ pipeline {
         stage('Git Checkout') {
             steps {
                 git branch: 'main',
-                    url: 'https://github.com/<your-username>/Zomato.git'
+                    url: 'https://github.com/kamales113/Zomato-project.git'
+            }
+        }
+
+        // ✅ SAFE SONARQUBE ADDITION
+        stage('SonarQube Analysis') {
+            steps {
+                withSonarQubeEnv('sonar-server') {
+                    sh '''
+                    $SCANNER_HOME/bin/sonar-scanner \
+                    -Dsonar.projectName=zomato \
+                    -Dsonar.projectKey=zomato
+                    '''
+                }
+            }
+        }
+
+        stage('Quality Gate') {
+            steps {
+                waitForQualityGate abortPipeline: false
             }
         }
 
@@ -229,10 +247,10 @@ pipeline {
             steps {
                 script {
                     withDockerRegistry(credentialsId: 'docker', toolName: 'docker') {
-                        sh """
-                            docker tag zomato ${DOCKER_IMAGE}:latest
-                            docker push ${DOCKER_IMAGE}:latest
-                        """
+                        sh '''
+                        docker tag zomato ${DOCKER_IMAGE}:latest
+                        docker push ${DOCKER_IMAGE}:latest
+                        '''
                     }
                 }
             }
@@ -241,10 +259,10 @@ pipeline {
         stage('Deploy to Kubernetes') {
             steps {
                 sh '''
-                    kubectl apply -f kubernetes/deployment.yml
-                    kubectl apply -f kubernetes/service.yml
-                    kubectl apply -f kubernetes/hpa.yml
-                    kubectl rollout status deployment/zomato
+                kubectl apply -f kubernetes/deployment.yml
+                kubectl apply -f kubernetes/service.yml
+                kubectl apply -f kubernetes/hpa.yml
+                kubectl rollout status deployment/zomato
                 '''
             }
         }
@@ -252,10 +270,10 @@ pipeline {
 
     post {
         success {
-            echo 'Pipeline completed successfully. App deployed to EKS.'
+            echo '✅ Pipeline completed successfully. App deployed to EKS.'
         }
         failure {
-            echo 'Pipeline failed. Check the logs above.'
+            echo '❌ Pipeline failed. Check logs.'
         }
     }
 }
@@ -264,8 +282,10 @@ pipeline {
 > Replace `<your-dockerhub-username>` and `<your-username>` with your actual values.
 
 ### Step 5 — Push All Files to GitHub
-
+install git 
 ```bash
+sudo su
+
 git add .
 git commit -m "Add Dockerfile, Kubernetes manifests, and Jenkinsfile"
 git push origin main
@@ -309,13 +329,6 @@ Go to: **AWS Console → IAM → Users → Create User**
 - Create **Access Key** (CLI type)
 - **Save the Access Key ID and Secret Access Key** — you need them in the next step
 
-### SSH Into Your EC2
-
-```bash
-ssh -i "your-key.pem" ubuntu@<ec2-public-ip>
-sudo su
-sudo apt update -y
-```
 
 ### Install AWS CLI
 
@@ -331,11 +344,11 @@ Configure with your IAM credentials:
 ```bash
 aws configure
 ```
-
+Go to IAM --> user--> create access --> CLI --> copy the ID and KEY
 Enter when prompted:
 - AWS Access Key ID: `<your-access-key>`
 - AWS Secret Access Key: `<your-secret-key>`
-- Default region: `ap-northeast-1`
+- Default region: `ap-nouth-1`
 - Output format: `json`
 
 **Verify:** `aws --version`
@@ -498,7 +511,7 @@ Click **Add webhook**.
 ### Step 2 — Enable in Jenkins Job
 
 In your Jenkins Pipeline job settings:
-- **Build Triggers** → check **GitHub hook trigger for GITScm polling**
+-
 
 Now every push to `main` automatically triggers the pipeline.
 
@@ -511,13 +524,14 @@ Now every push to `main` automatically triggers the pipeline.
 1. Jenkins → **New Item**
 2. Name: `zomato-pipeline` → **Pipeline** → OK
 3. Under Pipeline:
+   **Build Triggers** → check **GitHub hook trigger for GITScm polling**
    - Definition: `Pipeline script from SCM`
    - SCM: `Git`
    - Repository URL: `https://github.com/<your-username>/Zomato.git`
    - Branch: `*/main`
    - Script Path: `Jenkinsfile`
-4. Check: **GitHub hook trigger for GITScm polling**
-5. **Save** → **Build Now**
+5. Check: **GitHub hook trigger for GITScm polling**
+6. **Save** → **Build Now**
 
 ### Pipeline Stages
 
@@ -566,7 +580,9 @@ Expected: Two nodes with status `Ready`.
 
 ### Deploy the App Manually (First Time)
 
+
 ```bash
+git repo https://github.com/kamales113/Zomato-project.git
 cd Zomato
 cd Kubernetes/
 kubectl apply -f deployment.yml
@@ -584,17 +600,7 @@ kubectl get hpa
 
 Expected output shows `zomato-hpa` with min 2 / max 6 replicas.
 
-### Cluster Specifications
 
-| Setting | Value |
-|---|---|
-| Cluster Name | Castro-Cluster |
-| Region | ap-northeast-1 (Tokyo) |
-| Availability Zones | ap-northeast-1a, ap-northeast-1b |
-| Node Type | t2.medium |
-| Min Nodes | 2 |
-| Max Nodes | 4 |
-| Node Volume | 20 GB |
 
 ---
 
