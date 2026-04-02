@@ -1,117 +1,435 @@
+# Zomato Food Delivery App — Capstone DevOps Project
 
-# Zomato App — DevOps Pipeline & Kubernetes Deployment
-
-## Table of Contents
-
-1. [Project Overview](#1-project-overview)
-2. [Infrastructure Setup](#2-infrastructure-setup)
-3. [Tool Installation](#3-tool-installation)
-4. [Jenkins Configuration](#4-jenkins-configuration)
-5. [Phase 1 — CI/CD Pipeline (Docker Deployment)](#5-phase-1--cicd-pipeline-docker-deployment)
-6. [Monitoring Stack (Prometheus & Grafana)](#6-monitoring-stack-prometheus--grafana)
-7. [Phase 2 — Kubernetes Deployment via AWS EKS](#7-phase-2--kubernetes-deployment-via-aws-eks)
-8. [Argo CD (GitOps) Setup](#8-argo-cd-gitops-setup)
-9. [Final Deployment & Verification](#9-final-deployment--verification)
-10. [Troubleshooting](#10-troubleshooting)
-11. [Cleanup & Teardown](#11-cleanup--teardown)
+> **Capstone Objective:** Deploy a Zomato clone on AWS EKS with a fully automated CI/CD pipeline using Jenkins, SonarQube, OWASP, Trivy, Docker Scout, Prometheus, Grafana, and Argo CD.
+>
+> **GitHub Repo:** https://github.com/thecareerbeer/Zomato
+>
+> ⚠️ **Important:** The capstone requires you to write your own `Dockerfile` and Kubernetes manifests. Templates are provided in this document.
 
 ---
 
-## 1. Project Overview
+## Table of Contents
 
-This project deploys a **Zomato clone** (Node.js web application) using a two-phase DevOps strategy:
+1. [Project Overview & Business Goals](#1-project-overview--business-goals)
+2. [Prerequisites & Environment Setup](#2-prerequisites--environment-setup)
+3. [Fork Repo & Write Required Files](#3-fork-repo--write-required-files)
+4. [Tool Installation on Zomato Server](#4-tool-installation-on-zomato-server)
+5. [Jenkins Configuration](#5-jenkins-configuration)
+6. [GitHub Webhook Setup](#6-github-webhook-setup)
+7. [Phase 1 — CI/CD Pipeline (Docker Deployment)](#7-phase-1--cicd-pipeline-docker-deployment)
+8. [Service Access URLs](#8-service-access-urls)
+9. [Monitoring Stack — Prometheus, Node Exporter & Grafana](#9-monitoring-stack--prometheus-node-exporter--grafana)
+10. [Phase 2 — AWS EKS Kubernetes Deployment](#10-phase-2--aws-eks-kubernetes-deployment)
+11. [Argo CD (GitOps) Setup](#11-argo-cd-gitops-setup)
+12. [Final Deployment & Verification](#12-final-deployment--verification)
+13. [Troubleshooting](#13-troubleshooting)
+14. [Cleanup & Teardown](#14-cleanup--teardown)
+15. [Things You Must Do Manually](#15-things-you-must-do-manually)
 
-- **Phase 1:** CI/CD pipeline via Jenkins, deploying the app to a standalone Docker container for immediate validation.
-- **Phase 2:** Production-grade deployment to a managed **AWS EKS** (Kubernetes) cluster using **GitOps principles via Argo CD**, monitored by Prometheus and Grafana.
+---
 
-### Repository Structure
+## 1. Project Overview & Business Goals
+
+### What You Are Building
+
+A fully automated DevOps pipeline for a **Zomato food delivery clone** that:
+- Automatically builds and tests code on every GitHub push
+- Scans for code quality issues, dependency vulnerabilities, and image vulnerabilities
+- Deploys to a Docker container (Phase 1) and then to AWS EKS (Phase 2)
+- Monitors everything with Prometheus and Grafana
+
+### Business Goals (From Capstone Doc)
+
+- Faster and reliable deployments — zero manual deployments
+- Reduced manual intervention in infrastructure management
+- Improved scalability via Kubernetes auto-scaling
+- Real-time monitoring and alerting
+- Automated rollback in case of failures
+
+### Pipeline Flow
 
 ```
-/
-├── src/
-├── Dockerfile
-├── Jenkinsfile
-├── package.json
-├── package-lock.json
-└── kubernetes/
-    ├── deployment.yml
-    ├── node-service.yml
-    └── service.yml
+GitHub Push → Jenkins Webhook Trigger → Code Checkout
+→ SonarQube Analysis → Quality Gate
+→ OWASP Scan → Trivy FS Scan
+→ Docker Build → Tag & Push to Docker Hub
+→ Docker Scout Analysis
+→ Deploy to Docker Container (Phase 1 / Staging)
+→ Deploy to AWS EKS via Argo CD (Phase 2 / Production)
+→ Prometheus + Grafana Monitoring
 ```
 
 ### Technical Toolset
 
 | Category | Tools |
 |---|---|
-| **CI/CD & Orchestration** | Jenkins |
 | **Source Control** | GitHub |
-| **Artifact Management** | Docker Hub |
+| **CI/CD** | Jenkins |
 | **Code Quality** | SonarQube (LTS Community) |
-| **Security Suite** | OWASP Dependency-Check, Trivy, Docker Scout |
-| **Monitoring Stack** | Prometheus, Grafana, Node Exporter |
-| **Infrastructure & GitOps** | AWS EKS, Argo CD, eksctl, kubectl |
-| **Notifications** | Email Extension Plugin (SMTP) |
-
-> **Security Note:** Trivy handles filesystem and image vulnerability scanning. Docker Scout is integrated as a modern supplement, providing real-time recommendations and advanced analysis for the pushed image.
+| **Security** | OWASP Dependency-Check, Trivy, Docker Scout |
+| **Containerization** | Docker, Docker Hub |
+| **Orchestration** | AWS EKS, kubectl, eksctl |
+| **GitOps** | Argo CD |
+| **Monitoring** | Prometheus, Node Exporter, Grafana |
+| **Notifications** | Jenkins Email Extension (SMTP) |
 
 ---
 
-## 2. Infrastructure Setup
+## 2. Prerequisites & Environment Setup
 
-### EC2 Server Specifications
+### Step 1 — Launch Two EC2 Instances (AWS Console)
 
-| Specification | Zomato Server (Jenkins/Docker) | Monitoring Server (Prometheus/Grafana) |
+Go to: **AWS Console → EC2 → Launch Instance**
+
+| Setting | Zomato Server | Monitoring Server |
 |---|---|---|
+| **Name** | `zomato-server` | `monitoring-server` |
+| **AMI** | Ubuntu 24.04 LTS | Ubuntu 24.04 LTS |
 | **Instance Type** | t2.large | t2.large |
-| **Operating System** | Ubuntu 24.04 LTS | Ubuntu 24.04 LTS |
 | **Storage** | 29 GB | 29 GB |
-| **Name** | `zomato server` | `monitoring server` |
+| **Key Pair** | Create/select `.pem` file | Same `.pem` file |
 
-> **Note:** `t2.micro` cannot handle the multiple integrated tools. Use `t2.large` minimum. Storage is set to 29 GB to remain within the AWS Free Tier 30 GB limit.
+> `t2.micro` cannot handle all the tools. Always use `t2.large`.
+> 29 GB keeps you within the AWS Free Tier 30 GB EBS limit.
 
-### Security Group Port Configuration
+### Step 2 — Configure Security Group Inbound Rules
 
-| Port | Service | Target Server |
+For the **Zomato Server**:
+
+| Port | Protocol | Purpose |
 |---|---|---|
-| **8080** | Jenkins Dashboard | Zomato Server |
-| **9000** | SonarQube | Zomato Server |
-| **3000** | Zomato App (Phase 1) / Grafana Dashboard | Zomato Server / Monitoring Server |
-| **9090** | Prometheus | Monitoring Server |
-| **9100** | Node Exporter | Zomato, Monitoring, & EKS Worker Nodes |
-| **30001** | Zomato App (Phase 2) — NodePort | EKS Cluster |
+| 22 | TCP | SSH |
+| 8080 | TCP | Jenkins |
+| 9000 | TCP | SonarQube |
+| 3000 | TCP | Zomato App (Docker) |
+| 9100 | TCP | Node Exporter |
 
-> **Note:** Port 3000 is used on both servers but for different services. Manage carefully across separate instances.
+For the **Monitoring Server**:
 
-### IAM Configuration
+| Port | Protocol | Purpose |
+|---|---|---|
+| 22 | TCP | SSH |
+| 9090 | TCP | Prometheus |
+| 3000 | TCP | Grafana |
+| 9100 | TCP | Node Exporter |
 
-- Create an IAM user named `k8s` with **AdministratorAccess**.
-- Generate **Access Key** and **Secret Key** for AWS CLI configuration.
-- Create an **IAM OIDC Identity Provider** and associate it with the EKS cluster for IAM roles for Kubernetes service accounts.
+For **EKS Worker Nodes** (add after cluster creation):
 
-### AWS CLI Installation & Connection
+| Port | Protocol | Purpose |
+|---|---|---|
+| 9100 | TCP | Node Exporter |
+| 30001 | TCP | Zomato App NodePort |
+
+### Step 3 — IAM Setup (AWS Console)
+
+Go to: **AWS Console → IAM → Users → Create User**
+
+- User name: `k8s`
+- Attach policy: **AdministratorAccess**
+- Create **Access Key** (CLI type) → Save the `Access Key ID` and `Secret Access Key`
+
+### Step 4 — SSH Into Zomato Server
 
 ```bash
-sudo apt update && sudo apt install unzip -y
+ssh -i "your-key.pem" ubuntu@<zomato-server-public-ip>
+sudo su
+sudo apt update -y
+```
+
+### Step 5 — Install AWS CLI
+
+```bash
+sudo apt install unzip -y
 curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
 unzip awscliv2.zip
 sudo ./aws/install
 ```
 
-**Verify:** `aws --version` → Expected output: `2.18.74`
+Configure with your IAM credentials:
 
-**SSH Connection:**
 ```bash
-ssh -i "your-key.pem" ubuntu@<public-ip>
-sudo su
+aws configure
+```
+
+Enter when prompted:
+- AWS Access Key ID: `<your-access-key>`
+- AWS Secret Access Key: `<your-secret-key>`
+- Default region name: `ap-northeast-1`
+- Default output format: `json`
+
+**Verify:** `aws --version` → Expected: `2.18.74`
+
+---
+
+## 3. Fork Repo & Write Required Files
+
+> ⚠️ **Capstone Requirement:** You must write the `Dockerfile` and Kubernetes manifests yourself. Use the templates below.
+
+### Step 1 — Fork the Repository
+
+1. Go to: https://github.com/thecareerbeer/Zomato
+2. Click **Fork** → Fork to your own GitHub account
+3. Clone your fork to the Zomato Server:
+
+```bash
+git clone https://github.com/<your-username>/Zomato.git
+cd Zomato
+```
+
+### Step 2 — Write the Dockerfile
+
+Create `Dockerfile` in the root of the project:
+
+```dockerfile
+FROM node:18-alpine
+
+WORKDIR /app
+
+COPY package*.json ./
+
+RUN npm install --production
+
+COPY . .
+
+EXPOSE 3000
+
+CMD ["npm", "start"]
+```
+
+### Step 3 — Write Kubernetes Manifests
+
+Create a folder called `kubernetes/` in your repo:
+
+```bash
+mkdir kubernetes
+```
+
+**`kubernetes/deployment.yml`**
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zomato
+  namespace: default
+  labels:
+    app: zomato
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: zomato
+  template:
+    metadata:
+      labels:
+        app: zomato
+    spec:
+      containers:
+        - name: zomato
+          image: <your-dockerhub-username>/zomato:latest
+          ports:
+            - containerPort: 3000
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "250m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"
+```
+
+**`kubernetes/service.yml`**
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: zomato-service
+  namespace: default
+spec:
+  type: NodePort
+  selector:
+    app: zomato
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 3000
+      nodePort: 30001
+```
+
+**`kubernetes/hpa.yml`** _(Auto-scaling — required by capstone)_
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: zomato-hpa
+  namespace: default
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: zomato
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60
+```
+
+### Step 4 — Write the Jenkinsfile
+
+Create `Jenkinsfile` in the root of your repo:
+
+```groovy
+pipeline {
+    agent any
+
+    tools {
+        jdk 'jdk17'
+        nodejs 'node23'
+    }
+
+    environment {
+        SCANNER_HOME = tool 'sonar-scanner'
+        DOCKER_IMAGE = "<your-dockerhub-username>/zomato"
+    }
+
+    stages {
+
+        stage('Clean Workspace') {
+            steps {
+                cleanWs()
+            }
+        }
+
+        stage('Git Checkout') {
+            steps {
+                git branch: 'main', url: 'https://github.com/<your-username>/Zomato.git'
+            }
+        }
+
+        stage('SonarQube Analysis') {
+            steps {
+                withSonarQubeEnv('sonar-server') {
+                    sh """
+                        $SCANNER_HOME/bin/sonar-scanner \
+                        -Dsonar.projectName=zomato \
+                        -Dsonar.projectKey=zomato
+                    """
+                }
+            }
+        }
+
+        stage('Quality Gate') {
+            steps {
+                script {
+                    waitForQualityGate abortPipeline: false,
+                        credentialsId: 'sonar-token'
+                }
+            }
+        }
+
+        stage('Install Dependencies') {
+            steps {
+                sh 'npm install'
+            }
+        }
+
+        stage('OWASP Scan') {
+            steps {
+                dependencyCheck additionalArguments: '--scan ./ --disableYarnAudit --disableNodeAudit',
+                    odcInstallation: 'dp-check'
+                dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
+            }
+        }
+
+        stage('Trivy FS Scan') {
+            steps {
+                sh 'trivy fs . > trivy.txt'
+            }
+        }
+
+        stage('Docker Build') {
+            steps {
+                script {
+                    withDockerRegistry(credentialsId: 'docker', toolName: 'docker') {
+                        sh 'docker build -t zomato .'
+                    }
+                }
+            }
+        }
+
+        stage('Tag & Push to Docker Hub') {
+            steps {
+                script {
+                    withDockerRegistry(credentialsId: 'docker', toolName: 'docker') {
+                        sh """
+                            docker tag zomato ${DOCKER_IMAGE}:latest
+                            docker push ${DOCKER_IMAGE}:latest
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Docker Scout') {
+            steps {
+                script {
+                    withDockerRegistry(credentialsId: 'docker', toolName: 'docker') {
+                        sh 'docker scout quickview ${DOCKER_IMAGE}:latest'
+                        sh 'docker scout cves ${DOCKER_IMAGE}:latest'
+                    }
+                }
+            }
+        }
+
+        stage('Deploy to Container') {
+            steps {
+                sh 'docker run -d --name zomato -p 3000:3000 ${DOCKER_IMAGE}:latest'
+            }
+        }
+    }
+
+    post {
+        always {
+            emailext(
+                attachLog: true,
+                subject: "'${currentBuild.result}'",
+                body: "Project: ${env.JOB_NAME}<br/>Build Number: ${env.BUILD_NUMBER}<br/>URL: ${env.BUILD_URL}<br/>",
+                to: '<your-email@gmail.com>',
+                attachmentsPattern: 'trivy.txt'
+            )
+        }
+    }
+}
+```
+
+> Replace `<your-dockerhub-username>`, `<your-username>`, and `<your-email@gmail.com>` with your actual values.
+
+### Step 5 — Push All Files to GitHub
+
+```bash
+git add .
+git commit -m "Add Dockerfile, Kubernetes manifests, and Jenkinsfile"
+git push origin main
 ```
 
 ---
 
-## 3. Tool Installation
+## 4. Tool Installation on Zomato Server
 
-Install all components via shell scripts for reproducibility.
+### Jenkins & JDK 17 — `jenkins.sh`
 
-### Jenkins & JDK 17 (`jenkins.sh`)
+```bash
+vi jenkins.sh
+```
+
+Paste the following, then save (`:wq`):
 
 ```bash
 #!/bin/bash
@@ -120,22 +438,32 @@ sudo apt install openjdk-17-jdk -y
 wget -q -O - https://pkg.jenkins.io/debian-stable/jenkins.io.key | sudo apt-key add -
 sudo sh -c 'echo deb http://pkg.jenkins.io/debian-stable binary/ > /etc/apt/sources.list.d/jenkins.list'
 sudo apt update && sudo apt install jenkins -y
+sudo systemctl start jenkins
+sudo systemctl enable jenkins
 ```
 
 ```bash
 chmod +x jenkins.sh && ./jenkins.sh
 ```
 
-- Port **8080** must be open in the EC2 Security Group.
-- Retrieve initial admin password: `cat /var/lib/jenkins/secrets/initialAdminPassword`
-- Access Jenkins at: `http://<public-ip>:8080`
+Get the initial admin password:
 
-### Docker (`docker.sh`)
+```bash
+cat /var/lib/jenkins/secrets/initialAdminPassword
+```
+
+### Docker — `docker.sh`
+
+```bash
+vi docker.sh
+```
 
 ```bash
 #!/bin/bash
 sudo apt install docker.io -y
 sudo usermod -aG docker ubuntu
+sudo usermod -aG docker jenkins
+sudo systemctl restart docker
 newgrp docker
 ```
 
@@ -143,14 +471,19 @@ newgrp docker
 chmod +x docker.sh && ./docker.sh
 ```
 
-**Verify:** `docker --version` → Expected output: `27`
+**Verify:** `docker --version` → Expected: `27`
 
-### Trivy (`trivy.sh`)
+### Trivy — `trivy.sh`
+
+```bash
+vi trivy.sh
+```
 
 ```bash
 #!/bin/bash
 wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
-echo deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main | sudo tee -a /etc/apt/sources.list.d/trivy.list
+echo deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main | \
+  sudo tee -a /etc/apt/sources.list.d/trivy.list
 sudo apt update && sudo apt install trivy -y
 ```
 
@@ -158,155 +491,274 @@ sudo apt update && sudo apt install trivy -y
 chmod +x trivy.sh && ./trivy.sh
 ```
 
-**Verify:** `trivy --version` → Expected output: `0.56.2`
+**Verify:** `trivy --version` → Expected: `0.56.2`
 
 ### Docker Scout
 
-> **Critical Prerequisite:** You must `docker login` before using Docker Scout.
-
 ```bash
-# Step 1: Login to Docker Hub
+# Login to Docker Hub first (required before Scout works)
 docker login -u <your-dockerhub-username>
 
-# Step 2: Install Docker Scout
+# Install Docker Scout CLI
 curl -sSfL https://raw.githubusercontent.com/docker/scout-cli/main/install.sh | sh -s --
+sudo chmod +x /usr/local/bin/docker-scout
 ```
 
 ### SonarQube
-
-Run as a Docker container to isolate code analysis dependencies:
 
 ```bash
 docker run -d --name sonar -p 9000:9000 sonarqube:lts-community
 ```
 
-- Port **9000** must be open in the EC2 Security Group.
-- Access at: `http://<public-ip>:9000`
-- Default credentials: `admin` / `admin` (you will be prompted to change the password immediately).
+Access at: `http://<zomato-server-ip>:9000`
+- Default login: `admin` / `admin`
+- You will be forced to change the password on first login
 
-**Generate Token:**
-`Administration → Security → Users → Create Token`
-- Name: `token`
+**Generate SonarQube Token:**
+`Administration → Security → Users → Update Tokens → Generate`
+- Token name: `token`
 - Expiration: 30 days
-
-### Installed Tool Versions Summary
-
-| Tool | Version |
-|---|---|
-| AWS CLI | 2.18.74 |
-| Java JDK | 17 |
-| Docker | 27 |
-| Trivy | 0.56.2 |
-| Jenkins | Latest (via script) |
-| Node.js | 23.10 |
-| SonarQube Scanner | 6.2.1.4610 |
-| OWASP Dependency Check | 11.1.0 |
+- **Copy and save the token immediately** — it only shows once
 
 ---
 
-## 4. Jenkins Configuration
+## 5. Jenkins Configuration
 
-### Plugin Installation
+### Install Plugins
 
-Go to **Manage Jenkins → Plugins** and install:
+Go to: **Manage Jenkins → Plugins → Available plugins**
 
-| Plugin | Purpose |
+Search and install each:
+
+| Plugin Name | Purpose |
 |---|---|
-| Pipeline Stage View | Stage-by-stage execution visibility |
-| Eclipse Temurin Installer | Java version management |
-| SonarQube Scanner | Code quality integration |
-| Docker, Docker Commons, Docker Pipeline, Docker API, Docker Build Step | Build/push Docker images |
-| Email Extension Template | Success/failure email notifications |
-| OWASP Dependency-Check | Dependency vulnerability scanning |
-| NodeJS Plugin | Build the Node.js application |
+| Pipeline Stage View | Visual stage execution |
+| Eclipse Temurin Installer | Manage Java versions |
+| SonarQube Scanner | SonarQube integration |
+| Docker | Docker pipeline support |
+| Docker Commons | Docker shared library |
+| Docker Pipeline | Docker in pipeline DSL |
+| Docker API | Docker API access |
+| Docker Build Step | Docker build steps |
+| Email Extension Template | HTML email notifications |
+| OWASP Dependency-Check | Vulnerability scanning |
+| NodeJS | Node.js build support |
 | Prometheus Metrics | Expose Jenkins metrics |
 
-### Global Tool Configuration
+Click **Install** → Check **Restart Jenkins when installation is complete**
 
-Go to **Manage Jenkins → Tools**:
+### Configure Global Tools
 
-> **Important:** Tool names must match the Jenkinsfile environment variables exactly to prevent build failures.
+Go to: **Manage Jenkins → Tools**
+
+> ⚠️ Names must exactly match the Jenkinsfile or builds will fail.
 
 | Tool | Name (exact) | Version |
 |---|---|---|
-| JDK | `jdk17` | JDK 17 (17.0.8.1+1 from adoptium.net) |
+| JDK | `jdk17` | 17.0.8.1+1 (from adoptium.net) |
 | SonarQube Scanner | `sonar-scanner` | 6.2.1.4610 |
 | Node.js | `node23` | 23.10 |
-| Dependency-Check | `dp-check` | 11.1.0 (from GitHub) |
-| Docker | `docker` | Latest (from docker.com) |
+| Dependency-Check | `dp-check` | 11.1.0 (GitHub releases) |
+| Docker | `docker` | Latest (docker.com) |
 
-### Credentials Configuration
+### Add Credentials
 
-Go to **Manage Jenkins → Credentials → Global**:
+Go to: **Manage Jenkins → Credentials → Global → Add Credentials**
 
-| Credential | Kind | ID | Details |
+| # | Kind | ID | What to Enter |
 |---|---|---|---|
-| SonarQube Token | Secret text | `sonar-token` | Token generated from SonarQube UI |
-| Docker Hub | Username/Password | `docker` | Docker Hub username & password |
-| Gmail App Password | Username/Password | `email-cred` | Gmail address + Google App Password |
+| 1 | Secret text | `sonar-token` | The token generated from SonarQube |
+| 2 | Username with password | `docker` | Docker Hub username + password |
+| 3 | Username with password | `email-cred` | Gmail address + Google App Password |
 
-### System Configuration
+**To generate Gmail App Password:**
+Google Account → Security → 2-Step Verification → App passwords → Generate for "Mail"
 
-Go to **Manage Jenkins → System**:
+### Configure Jenkins System Settings
+
+Go to: **Manage Jenkins → System**
 
 **SonarQube Server:**
 - Name: `sonar-server`
-- URL: `http://<zomato-server-ip>:9000`
-- Authentication Token: `sonar-token`
+- Server URL: `http://<zomato-server-ip>:9000`
+- Server authentication token: select `sonar-token`
 
-**SonarQube Webhook** (configured in SonarQube UI):
-`Configuration → Webhooks → Create`
+**Extended E-mail Notification:**
+- SMTP server: `smtp.gmail.com`
+- SMTP Port: `465`
+- Advanced → Credentials: `email-cred`
+- Enable SSL: ✅
+- Default Triggers: `Always` + `Failure` + `Success`
+
+**SonarQube Webhook** (set inside SonarQube UI, not Jenkins):
+`SonarQube → Administration → Configuration → Webhooks → Create`
 - Name: `Jenkins`
-- URL: `http://<jenkins-server-ip>:8080/sonarqube-webhook/`
-
-**Email (Extended E-mail Notification):**
-- SMTP Server: `smtp.gmail.com`
-- Port: `465`
-- Credentials: `email-cred`
-- Use SSL: ✅
-- Default Triggers: `Always`, `Failure`, `Success`
+- URL: `http://<zomato-server-ip>:8080/sonarqube-webhook/`
 
 ---
 
-## 5. Phase 1 — CI/CD Pipeline (Docker Deployment)
+## 6. GitHub Webhook Setup
 
-### Pipeline Stages (12 Stages)
+This makes Jenkins trigger automatically on every `git push`.
 
-| # | Stage | Description |
-|---|---|---|
-| 1 | **Clean Workspace** | Runs `cleanWs()` — removes all artifacts from previous builds |
-| 2 | **Git Checkout** | Clones the Zomato source code from GitHub (master branch) |
-| 3 | **SonarQube Analysis** | Scans code using `sonar-server` tool with project key `zomato` |
-| 4 | **Quality Gate** | Blocks the pipeline if SonarQube standards are not met |
-| 5 | **Install Dependencies** | Runs `npm install` to install Node.js packages |
-| 6 | **OWASP Scan** | Runs `DP-Check`; generates `dependency-check-report.xml` (⚠️ ~30 min wait) |
-| 7 | **Trivy FS Scan** | Scans the filesystem; outputs results to `trivy.txt` for email attachment |
-| 8 | **Docker Build** | Builds Docker image locally tagged as `zomato:latest` |
-| 9 | **Tag & Push** | Tags as `latest` and pushes to `<dockerhub-user>/zomato:latest` |
-| 10 | **Docker Scout** | Analyzes the pushed image for vulnerabilities and recommendations |
-| 11 | **Deploy to Container** | Runs the app container on port 3000 |
-| 12 | **Email Notification** | Sends build status + `trivy.txt` attachment via SMTP |
+### Step 1 — Get Jenkins URL
 
-**Deploy to Container command:**
-```bash
-docker run -d --name zomato -p 3000:3000 <dockerhub-user>/zomato:latest
+Your webhook URL will be:
+```
+http://<zomato-server-ip>:8080/github-webhook/
 ```
 
-### Accessing the Application (Phase 1)
+### Step 2 — Add Webhook in GitHub
 
-Navigate to: `http://<zomato-server-public-ip>:3000`
+Go to your **forked GitHub repo** → **Settings → Webhooks → Add webhook**
 
-> Port **3000** must be open in the EC2 Security Group.
+| Field | Value |
+|---|---|
+| Payload URL | `http://<zomato-server-ip>:8080/github-webhook/` |
+| Content type | `application/json` |
+| Which events | **Just the push event** |
+| Active | ✅ checked |
+
+Click **Add webhook**.
+
+### Step 3 — Configure Jenkins Job for Webhook
+
+When creating your Jenkins Pipeline job:
+- Under **Build Triggers** → check **GitHub hook trigger for GITScm polling**
+
+Now every push to the `main` branch will auto-trigger the pipeline.
 
 ---
 
-## 6. Monitoring Stack (Prometheus & Grafana)
+## 7. Phase 1 — CI/CD Pipeline (Docker Deployment)
 
-Set up on the **Monitoring Server** (second EC2 instance).
+### Create the Jenkins Pipeline Job
 
-### Prometheus Service Configuration
+1. Jenkins Dashboard → **New Item**
+2. Name: `zomato-pipeline`
+3. Type: **Pipeline** → OK
+4. Under **Pipeline**:
+   - Definition: `Pipeline script from SCM`
+   - SCM: `Git`
+   - Repository URL: `https://github.com/<your-username>/Zomato.git`
+   - Branch: `*/main`
+   - Script Path: `Jenkinsfile`
+5. Check: **GitHub hook trigger for GITScm polling**
+6. Click **Save** → Click **Build Now**
 
-Create `/etc/systemd/system/prometheus.service`:
+### Pipeline Stages Summary
+
+| # | Stage | What Happens | Wait Time |
+|---|---|---|---|
+| 1 | Clean Workspace | Wipes previous build files | Instant |
+| 2 | Git Checkout | Pulls latest code from GitHub | Seconds |
+| 3 | SonarQube Analysis | Scans code quality | ~2 min |
+| 4 | Quality Gate | Passes/fails based on Sonar result | ~1 min |
+| 5 | Install Dependencies | `npm install` | ~1 min |
+| 6 | OWASP Scan | Dependency vulnerability scan | ⏳ ~30 min |
+| 7 | Trivy FS Scan | Filesystem vulnerability scan | ~2 min |
+| 8 | Docker Build | Builds image locally | ~2 min |
+| 9 | Tag & Push | Pushes to Docker Hub | ~2 min |
+| 10 | Docker Scout | Vulnerability analysis on pushed image | ~1 min |
+| 11 | Deploy to Container | Runs app on port 3000 | Instant |
+| 12 | Email Notification | Sends result + trivy.txt | Instant |
+
+> ⚠️ OWASP scan will show as "unstable" (yellow) on first run — this is normal. The pipeline continues.
+
+---
+
+## 8. Service Access URLs
+
+Bookmark these — you will need them throughout the project.
+
+| Service | URL | Login |
+|---|---|---|
+| Jenkins | `http://<zomato-server-ip>:8080` | admin / (initial password) |
+| SonarQube | `http://<zomato-server-ip>:9000` | admin / (your password) |
+| Zomato App (Docker) | `http://<zomato-server-ip>:3000` | None |
+| Prometheus | `http://<monitoring-server-ip>:9090` | None |
+| Grafana | `http://<monitoring-server-ip>:3000` | admin / admin |
+| Zomato App (EKS) | `http://<eks-node-ip>:30001` | None |
+
+---
+
+## 9. Monitoring Stack — Prometheus, Node Exporter & Grafana
+
+SSH into the **Monitoring Server**:
+
+```bash
+ssh -i "your-key.pem" ubuntu@<monitoring-server-ip>
+sudo su
+sudo apt update -y
+```
+
+### Install Prometheus
+
+```bash
+# Create user and directories
+sudo useradd --no-create-home --shell /bin/false prometheus
+sudo mkdir /etc/prometheus
+sudo mkdir /var/lib/prometheus
+sudo chown prometheus:prometheus /var/lib/prometheus
+
+# Download Prometheus
+wget https://github.com/prometheus/prometheus/releases/download/v2.47.0/prometheus-2.47.0.linux-amd64.tar.gz
+tar xvfz prometheus-2.47.0.linux-amd64.tar.gz
+cd prometheus-2.47.0.linux-amd64
+
+# Move binaries
+sudo cp prometheus /usr/local/bin/
+sudo cp promtool /usr/local/bin/
+sudo chown prometheus:prometheus /usr/local/bin/prometheus
+sudo chown prometheus:prometheus /usr/local/bin/promtool
+
+# Move config files
+sudo cp -r consoles /etc/prometheus
+sudo cp -r console_libraries /etc/prometheus
+sudo chown -R prometheus:prometheus /etc/prometheus
+```
+
+### Install Node Exporter
+
+```bash
+cd ~
+wget https://github.com/prometheus/node_exporter/releases/download/v1.6.1/node_exporter-1.6.1.linux-amd64.tar.gz
+tar xvfz node_exporter-1.6.1.linux-amd64.tar.gz
+sudo cp node_exporter-1.6.1.linux-amd64/node_exporter /usr/local/bin/
+sudo useradd --no-create-home --shell /bin/false nodeusr
+sudo chown nodeusr:nodeusr /usr/local/bin/node_exporter
+```
+
+### Create Node Exporter Service
+
+```bash
+sudo vi /etc/systemd/system/node_exporter.service
+```
+
+Paste:
+
+```ini
+[Unit]
+Description=Node Exporter
+After=network.target
+
+[Service]
+User=nodeusr
+Group=nodeusr
+Type=simple
+ExecStart=/usr/local/bin/node_exporter
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### Create Prometheus Service
+
+```bash
+sudo vi /etc/systemd/system/prometheus.service
+```
+
+Paste:
 
 ```ini
 [Unit]
@@ -329,12 +781,23 @@ ExecStart=/usr/local/bin/prometheus \
 WantedBy=multi-user.target
 ```
 
-### Prometheus Scrape Configuration (`prometheus.yml`)
+### Configure Prometheus Scrape Jobs
 
-Append the following under `scrape_configs`:
+```bash
+sudo vi /etc/prometheus/prometheus.yml
+```
+
+Replace/append the `scrape_configs` section:
 
 ```yaml
+global:
+  scrape_interval: 15s
+
 scrape_configs:
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
   - job_name: 'node_exporter'
     static_configs:
       - targets: ['<monitoring-server-ip>:9100']
@@ -346,53 +809,84 @@ scrape_configs:
 
   - job_name: 'kubernetes'
     static_configs:
-      - targets: ['<k8s-node-ip>:9100']
+      - targets: ['<eks-node-ip>:9100']
 ```
 
-> **Note:** The `metrics_path: '/prometheus'` is required to capture data from the Jenkins Prometheus plugin.
+> Replace `<monitoring-server-ip>`, `<zomato-server-ip>`, and `<eks-node-ip>` with your actual IPs.
+> Add the Kubernetes target after the EKS cluster is created.
 
-### Service Management
+### Validate and Start Services
 
 ```bash
+# Validate prometheus config
+promtool check config /etc/prometheus/prometheus.yml
+# Expected: SUCCESS
+
+# Start all services
 sudo systemctl daemon-reload
-sudo systemctl enable prometheus
-sudo systemctl start prometheus
+sudo systemctl enable prometheus && sudo systemctl start prometheus
+sudo systemctl enable node_exporter && sudo systemctl start node_exporter
 
-sudo systemctl enable node_exporter
-sudo systemctl start node_exporter
-
-sudo systemctl enable grafana-server
-sudo systemctl start grafana-server
-```
-
-**Verify status:**
-```bash
+# Verify
 sudo systemctl status prometheus
 sudo systemctl status node_exporter
+```
+
+### Install Grafana
+
+```bash
+sudo apt install -y software-properties-common
+wget -q -O - https://packages.grafana.com/gpg.key | sudo apt-key add -
+echo "deb https://packages.grafana.com/oss/deb stable main" | \
+  sudo tee -a /etc/apt/sources.list.d/grafana.list
+sudo apt update
+sudo apt install grafana -y
+sudo systemctl enable grafana-server
+sudo systemctl start grafana-server
 sudo systemctl status grafana-server
 ```
 
-Expected output: `active (running)`
+Access Grafana at: `http://<monitoring-server-ip>:3000`
+- Default login: `admin` / `admin` (you will be asked to change it)
 
-**Validate Prometheus config:**
-```bash
-/usr/local/bin/promtool check config /etc/prometheus/prometheus.yml
-```
-Expected output: `SUCCESS`
+### Connect Prometheus to Grafana
 
-### Ports
+1. Grafana UI → **Connections → Data Sources → Add data source**
+2. Select **Prometheus**
+3. URL: `http://<monitoring-server-ip>:9090`
+4. Click **Save & Test** → Should show "Data source is working"
 
-| Service | Port |
-|---|---|
-| Prometheus | 9090 |
-| Grafana | 3000 |
-| Node Exporter | 9100 |
+### Import Jenkins Dashboard
+
+1. Grafana UI → **Dashboards → Import**
+2. Dashboard ID: `9964` → Click **Load**
+3. Select Prometheus as data source → **Import**
 
 ---
 
-## 7. Phase 2 — Kubernetes Deployment via AWS EKS
+## 10. Phase 2 — AWS EKS Kubernetes Deployment
 
-### EKS Cluster Creation
+### Install eksctl
+
+```bash
+curl --silent --location \
+  "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" \
+  | tar xz -C /tmp
+sudo mv /tmp/eksctl /usr/local/bin
+eksctl version
+```
+
+### Install kubectl
+
+```bash
+curl -O https://s3.us-west-2.amazonaws.com/amazon-eks/1.24.11/2023-03-17/bin/linux/amd64/kubectl
+chmod +x ./kubectl
+sudo cp ./kubectl /usr/local/bin
+export PATH=/usr/local/bin:$PATH
+kubectl version --client
+```
+
+### Create EKS Cluster
 
 ```bash
 eksctl create cluster \
@@ -401,9 +895,11 @@ eksctl create cluster \
   --zones ap-northeast-1a,ap-northeast-1b
 ```
 
-> Wait time: approximately **20 minutes**.
+> ⏳ Wait approximately **20 minutes** — do not close the terminal.
 
-### Associate OIDC Provider (Mandatory)
+### Associate IAM OIDC Provider
+
+Required for IAM roles for Kubernetes service accounts (do not skip):
 
 ```bash
 eksctl utils associate-iam-oidc-provider \
@@ -412,7 +908,7 @@ eksctl utils associate-iam-oidc-provider \
   --region ap-northeast-1
 ```
 
-### Node Group Creation
+### Create Node Group
 
 ```bash
 eksctl create nodegroup \
@@ -425,187 +921,289 @@ eksctl create nodegroup \
   --nodes-max=4 \
   --node-volume-size=20 \
   --ssh-access \
-  --ssh-public-key=<pem-file-name>
+  --ssh-public-key=<your-pem-key-name>
 ```
 
-> Wait time: approximately **10–15 minutes**.
+> ⏳ Wait approximately **10–15 minutes**.
 
-**Node Group Specifications:**
+### Connect kubectl to Cluster
+
+```bash
+aws eks update-kubeconfig --name Castro-Cluster --region ap-northeast-1
+kubectl get nodes
+```
+
+Expected output: Two nodes with status `Ready`.
+
+### Apply Auto-Scaling (HPA)
+
+After deploying the app via Argo CD:
+
+```bash
+kubectl apply -f kubernetes/hpa.yml
+kubectl get hpa
+```
+
+### EKS Cluster Specifications
 
 | Setting | Value |
 |---|---|
 | Cluster Name | Castro-Cluster |
-| Region | Tokyo (ap-northeast-1) |
+| Region | ap-northeast-1 (Tokyo) |
 | Availability Zones | ap-northeast-1a, ap-northeast-1b |
-| Node Instance Type | t2.medium |
+| Node Type | t2.medium |
 | Min Nodes | 2 |
 | Max Nodes | 4 |
-| Node Storage | 20 GB |
+| Node Volume | 20 GB |
 
 ---
 
-## 8. Argo CD (GitOps) Setup
+## 11. Argo CD (GitOps) Setup
 
-> **Critical Warning:** The `kubectl patch` command for the LoadBalancer **frequently fails in VS Code terminals**. It must be run in **Windows Command Prompt (Admin)** or **PowerShell**.
+> ⚠️ **Critical:** The `kubectl patch` command must be run in **Windows Command Prompt (Admin)** or **PowerShell** — it regularly fails in VS Code terminals.
 
-### Installation
+### Install Argo CD
 
 ```bash
+# Step 1: Create namespace
 kubectl create namespace argocd
 
+# Step 2: Install Argo CD
 kubectl apply -n argocd -f \
   https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
 
+# Step 3: Expose Argo CD via LoadBalancer
 kubectl patch svc argocd-server -n argocd \
   -p '{"spec": {"type": "LoadBalancer"}}'
 ```
 
-Wait ~5 minutes for the LoadBalancer URL to be generated.
-
-### Verify
+> ⏳ Wait ~5 minutes for the LoadBalancer URL to be provisioned.
 
 ```bash
-kubectl get namespace
-kubectl get pods -n argocd
+# Get the LoadBalancer URL
+kubectl get svc argocd-server -n argocd
 ```
 
-### Retrieve Argo CD Initial Password
+### Get Argo CD Initial Admin Password
 
 ```bash
 kubectl get secret argocd-initial-admin-secret \
   -n argocd -o jsonpath="{.data.password}" | base64 -d
 ```
 
-> Run this in **Windows Command Prompt / PowerShell** if VS Code terminal throws errors.
+### Verify Argo CD Is Running
 
----
-
-## 9. Final Deployment & Verification
-
-### Update Kubernetes Manifests
-
-Before syncing with Argo CD, update `kubernetes/deployment.yml` in your forked repository:
-
-```yaml
-# Change this line:
-image: <original-image>
-
-# To your Docker Hub image:
-image: <your-dockerhub-username>/zomato:latest
+```bash
+kubectl get pods -n argocd
+kubectl get namespace
 ```
 
-> `service.yml` is pre-configured with **NodePort 30001** — no changes needed.
+All pods should show `Running`.
 
 ### Create Argo CD Application
 
-1. Log in to Argo CD UI (via LoadBalancer URL).
-2. **Add Repository:** Connect your forked GitHub repo via HTTPS.
-3. **Create Application:**
-   - **App Name:** `zomato` *(must be all lowercase)*
-   - **Path:** `kubernetes`
-   - **Destination:** `https://kubernetes.default.svc`
-   - **Namespace:** `default`
-4. **Sync** the application.
+1. Open Argo CD UI using the LoadBalancer URL in your browser
+2. Login: username `admin`, password from above command
+3. Click **+ New App**
 
-### Verification
+| Field | Value |
+|---|---|
+| Application Name | `zomato` _(must be lowercase)_ |
+| Project | `default` |
+| Sync Policy | `Automatic` |
+| Repository URL | `https://github.com/<your-username>/Zomato.git` |
+| Revision | `main` |
+| Path | `kubernetes` |
+| Cluster URL | `https://kubernetes.default.svc` |
+| Namespace | `default` |
 
-| Test | URL | Expected Result |
-|---|---|---|
-| Phase 1 (Docker) | `http://<zomato-server-ip>:3000` | Zomato UI loads |
-| Phase 2 (EKS) | `http://<eks-node-ip>:30001` | Zomato UI loads |
-
-**Docker verification commands:**
-```bash
-docker images     # Verify images are present
-docker ps         # Verify container is running
-```
-
-**Kubernetes verification commands:**
-```bash
-kubectl get namespace
-kubectl get pods -n argocd
-kubectl get nodes
-```
+4. Click **Create** → Click **Sync** → Click **Synchronize**
 
 ---
 
-## 10. Troubleshooting
+## 12. Final Deployment & Verification
 
-### Port 3000 Conflict (Jenkins Re-run)
+### Update deployment.yml Before Syncing
 
-**Error:** Pipeline fails at "Deploy to Container" — port 3000 already bound.
+In your GitHub repo, make sure `kubernetes/deployment.yml` has your actual Docker Hub image:
+
+```yaml
+image: <your-dockerhub-username>/zomato:latest
+```
+
+Commit and push this change before syncing in Argo CD.
+
+### Verify Everything Is Running
+
+```bash
+# Check pods
+kubectl get pods
+kubectl get pods -n argocd
+
+# Check services
+kubectl get svc
+
+# Check nodes
+kubectl get nodes
+
+# Check HPA
+kubectl get hpa
+
+# Check Docker on Zomato Server
+docker ps
+docker images
+```
+
+### Final Access Test
+
+| What | URL | Should Show |
+|---|---|---|
+| Jenkins | `http://<zomato-server-ip>:8080` | Jenkins dashboard |
+| SonarQube | `http://<zomato-server-ip>:9000` | Zomato project quality report |
+| App (Docker) | `http://<zomato-server-ip>:3000` | Zomato UI |
+| Prometheus | `http://<monitoring-server-ip>:9090` | Prometheus targets (all green) |
+| Grafana | `http://<monitoring-server-ip>:3000` | Dashboards with live metrics |
+| App (EKS) | `http://<eks-node-ip>:30001` | Zomato UI from Kubernetes |
+
+---
+
+## 13. Troubleshooting
+
+### Port 3000 Already in Use (Pipeline Re-run)
+
+**Error:** "Deploy to Container" fails — port 3000 already bound.
 
 **Fix:**
 ```bash
-docker stop zomato
-docker rm zomato
+docker stop zomato && docker rm zomato
 ```
-Then re-run the pipeline.
 
-### OWASP Unstable Build
+Re-run the pipeline.
 
-**Error:** Pipeline flagged as "unstable" (yellow) during OWASP scan.
+### OWASP Build Shows "Unstable" (Yellow)
 
-**Cause:** High-severity vulnerabilities found, or timeout during the scan (~30 min).
+**Cause:** High-severity vulnerabilities found or scan timed out.
 
-**Fix:** The pipeline is configured to continue regardless. Optionally, adjust the Jenkinsfile to ignore the unstable status or remediate the vulnerable packages.
+**Fix:** Normal behaviour — the pipeline continues. You can adjust the Jenkinsfile to ignore the unstable status.
 
-### Prometheus Node Down (0/1 Up)
+### Prometheus Shows Node Exporter 0/1 Up
 
-**Error:** EKS Node Exporter targets show `0/1 up` (red) in Prometheus.
+**Cause:** Port 9100 not open on EKS Worker Node Security Group.
 
-**Cause:** Port 9100 is not open on the EKS Worker Node Security Group.
+**Fix:** AWS Console → EC2 → Security Groups → Find the Node Group SG → Add inbound rule: TCP port `9100`.
 
-**Fix:** In the AWS EC2 Console, navigate to the **Node Group's Security Group** and add an inbound rule for port `9100`.
-
-### Argo CD App Creation Failure
-
-**Error:** `application is invalid` / metadata error.
+### Argo CD App Creation Fails — "Invalid Metadata"
 
 **Cause:** Uppercase letters in the app name.
 
-**Fix:** Use all lowercase for the app name: `zomato`.
+**Fix:** Use all lowercase: `zomato` not `Zomato`.
 
-### kubectl / Argo CD Commands Failing in VS Code
+### kubectl Commands Fail in VS Code Terminal
 
-**Error:** `kubectl patch` or Argo CD password retrieval throws bad request errors.
+**Fix:** Switch to **Windows Command Prompt** or **PowerShell (Admin)** and run from there.
 
-**Fix:** Open **Windows Command Prompt** or **PowerShell** as Administrator and run the commands there.
+### Jenkins Cannot Connect to Docker
+
+**Cause:** Jenkins user not in Docker group.
+
+**Fix:**
+```bash
+sudo usermod -aG docker jenkins
+sudo systemctl restart jenkins
+```
+
+### Prometheus Config Validation Fails
+
+**Fix:**
+```bash
+promtool check config /etc/prometheus/prometheus.yml
+```
+Check for YAML indentation errors — YAML is whitespace-sensitive.
+
+### Expected Version Outputs
+
+| Command | Expected Output |
+|---|---|
+| `aws --version` | `2.18.74` |
+| `docker --version` | `27` |
+| `trivy --version` | `0.56.2` |
+| `promtool check config ...` | `SUCCESS` |
+| `eksctl version` | Latest |
+| `kubectl version --client` | Matches EKS version |
 
 ---
 
-## 11. Cleanup & Teardown
+## 14. Cleanup & Teardown
 
-> ⚠️ Follow this sequence carefully to avoid unexpected AWS charges.
+> ⚠️ Do this after submission to avoid ongoing AWS charges.
 
-**Step 1 — Delete Node Group:**
 ```bash
+# Step 1: Delete Node Group
 eksctl delete nodegroup \
   --cluster=Castro-Cluster \
   --name=Castro-demo-NG
-```
 
-**Step 2 — Delete Cluster:**
-```bash
+# Step 2: Delete Cluster
 eksctl delete cluster --name=Castro-Cluster
+
+# Step 3: Stop Docker containers on Zomato Server
+docker stop zomato sonar
+docker rm zomato sonar
+
+# Step 4: Stop EC2 instances (AWS Console)
+# Go to EC2 → Instances → Select both → Instance State → Stop/Terminate
 ```
 
-**Step 3 — Manual Cleanup:**
-Navigate to the **AWS CloudFormation Console** and delete any remaining stacks associated with the EKS cluster.
+**Step 5 — Manual CloudFormation Cleanup:**
+AWS Console → **CloudFormation** → Delete any remaining stacks with names starting with `eksctl-Castro-Cluster`.
 
 ---
 
-## Appendix: Complete Step-by-Step Workflow Summary
+## 15. Things You Must Do Manually
 
-| Step | Action | Wait Time |
-|---|---|---|
-| 1 | SSH into Zomato Server, install AWS CLI, Jenkins, Docker, Trivy | — |
-| 2 | Docker login, run SonarQube container, install Docker Scout | — |
-| 3 | Configure Jenkins: plugins, tools, credentials, system settings | — |
-| 4 | Create & run Jenkins Pipeline job | ~30 min (OWASP scan) |
-| 5 | Set up Monitoring Server: Prometheus, Node Exporter, Grafana | — |
-| 6 | Create EKS Cluster (`eksctl create cluster`) | ~20 min |
-| 7 | Associate OIDC Provider, create Node Group | ~10–15 min |
-| 8 | Install Argo CD, expose via LoadBalancer | ~5 min |
-| 9 | Update `deployment.yml`, create Argo CD app, sync | — |
-| 10 | Verify app at `http://<node-ip>:30001` | — |
+These steps **cannot be scripted or automated** — you must do them yourself carefully:
+
+### 🔴 Critical — Must Do Before Anything Else
+
+| # | Task | Where | Why |
+|---|---|---|---|
+| 1 | **Fork the GitHub repo** | GitHub UI | You need your own copy to push Dockerfile, Jenkinsfile, and manifests |
+| 2 | **Write Dockerfile** | Your code editor | Capstone requirement — templates provided in Section 3 |
+| 3 | **Write Kubernetes manifests** | Your code editor | Capstone requirement — templates provided in Section 3 |
+| 4 | **Create IAM user `k8s`** | AWS Console → IAM | Required for EKS and AWS CLI access |
+| 5 | **Save IAM Access Key & Secret** | Notepad/secure place | You only see the secret key once — if lost, create a new one |
+
+### 🟡 Must Do During Setup
+
+| # | Task | Where | Why |
+|---|---|---|---|
+| 6 | **Open Security Group ports** | AWS Console → EC2 → Security Groups | Wrong/missing ports = services unreachable |
+| 7 | **Generate SonarQube token** | SonarQube UI → Admin → Security | Token only shown once — copy it immediately |
+| 8 | **Generate Gmail App Password** | Google Account → Security | Regular Gmail password does not work with SMTP |
+| 9 | **Set up GitHub Webhook** | GitHub repo → Settings → Webhooks | Without this, Jenkins won't auto-trigger on push |
+| 10 | **Replace all placeholder values** in Jenkinsfile and `deployment.yml` | Code editor | `<your-dockerhub-username>` etc. must be your real values |
+
+### 🟠 Must Do During Kubernetes Phase
+
+| # | Task | Where | Why |
+|---|---|---|---|
+| 11 | **Run `kubectl patch` in PowerShell/CMD** | Windows terminal | Fails silently in VS Code terminal |
+| 12 | **Open port 9100 on EKS Node Group SG** | AWS Console → EC2 → Security Groups | Prometheus Node Exporter won't work without it |
+| 13 | **Update `deployment.yml` image before Argo CD sync** | GitHub repo | Argo CD will deploy old/wrong image if not updated |
+
+### 🟢 Must Do in Grafana UI (No Commands — All Clicks)
+
+| # | Task |
+|---|---|
+| 14 | Add Prometheus as a Data Source (`http://<monitoring-ip>:9090`) |
+| 15 | Import Jenkins dashboard (ID: `9964`) |
+| 16 | Import Node Exporter dashboard (ID: `1860`) |
+
+### ⏳ Steps That Take Time — Don't Close Terminal
+
+| Step | Wait Time |
+|---|---|
+| EKS Cluster creation | ~20 minutes |
+| Node Group creation | ~10–15 minutes |
+| Argo CD LoadBalancer URL | ~5 minutes |
+| OWASP scan in pipeline | ~30 minutes |
