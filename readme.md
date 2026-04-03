@@ -662,33 +662,67 @@ Set up on the **same EC2 instance** or a **separate monitoring EC2** (your choic
 
 ### Install Prometheus
 
-```bash
-# Create user and directories
-sudo useradd --no-create-home --shell /bin/false prometheus
-sudo mkdir /etc/prometheus
-sudo mkdir /var/lib/prometheus
-sudo chown prometheus:prometheus /var/lib/prometheus
+```
+sudo su
+cd ~
 
-# Download Prometheus
-wget https://github.com/prometheus/prometheus/releases/download/v2.47.0/prometheus-2.47.0.linux-amd64.tar.gz
-tar xvfz prometheus-2.47.0.linux-amd64.tar.gz
-cd prometheus-2.47.0.linux-amd64
+# Download and extract (you already did this)
+wget https://github.com/prometheus/prometheus/releases/download/v2.53.2/prometheus-2.53.2.linux-amd64.tar.gz
+tar -zxvf prometheus-2.53.2.linux-amd64.tar.gz
+cd prometheus-2.53.2.linux-amd64
 
 # Move binaries
 sudo cp prometheus /usr/local/bin/
 sudo cp promtool /usr/local/bin/
-sudo chown prometheus:prometheus /usr/local/bin/prometheus
-sudo chown prometheus:prometheus /usr/local/bin/promtool
 
-# Move config
+# Create directories
+sudo mkdir -p /etc/prometheus
+sudo mkdir -p /var/lib/prometheus
+
+# Move config files
 sudo cp -r consoles /etc/prometheus
 sudo cp -r console_libraries /etc/prometheus
+sudo cp prometheus.yml /etc/prometheus/
+
+# Create prometheus user
+sudo useradd --no-create-home --shell /bin/false prometheus
+
+# Set ownership
 sudo chown -R prometheus:prometheus /etc/prometheus
+sudo chown -R prometheus:prometheus /var/lib/prometheus
+sudo chown prometheus:prometheus /usr/local/bin/prometheus
+sudo chown prometheus:prometheus /usr/local/bin/promtool
 ```
 
-### Install Node Exporter
+#Create systemd service:
+```
+sudo tee /etc/systemd/system/prometheus.service > /dev/null <<EOF
+[Unit]
+Description=Prometheus
+After=network-online.target
 
-```bash
+[Service]
+User=prometheus
+ExecStart=/usr/local/bin/prometheus \
+  --config.file=/etc/prometheus/prometheus.yml \
+  --storage.tsdb.path=/var/lib/prometheus/
+
+[Install]
+WantedBy=multi-user.target
+EOF
+```
+#Start Prometheus:
+#bash
+```
+sudo systemctl daemon-reload
+sudo systemctl enable prometheus
+sudo systemctl start prometheus
+sudo systemctl status prometheus
+# Expected: active (running) ✅
+```
+Install Node Exporter
+bash
+```
 cd ~
 wget https://github.com/prometheus/node_exporter/releases/download/v1.6.1/node_exporter-1.6.1.linux-amd64.tar.gz
 tar xvfz node_exporter-1.6.1.linux-amd64.tar.gz
@@ -697,13 +731,10 @@ sudo useradd --no-create-home --shell /bin/false nodeusr
 sudo chown nodeusr:nodeusr /usr/local/bin/node_exporter
 ```
 
-### Create Node Exporter Systemd Service
-
-```bash
-sudo vi /etc/systemd/system/node_exporter.service
+Create Node Exporter Service
+bash
 ```
-
-```ini
+sudo tee /etc/systemd/system/node_exporter.service > /dev/null <<EOF
 [Unit]
 Description=Node Exporter
 After=network.target
@@ -716,42 +747,19 @@ ExecStart=/usr/local/bin/node_exporter
 
 [Install]
 WantedBy=multi-user.target
+EOF
 ```
-
-### Create Prometheus Systemd Service
-
-```bash
-sudo vi /etc/systemd/system/prometheus.service
+Update Prometheus Config With Your Actual IPs
+First get your EC2 private IP:
 ```
-
-```ini
-[Unit]
-Description=Prometheus
-Wants=network-online.target
-After=network-online.target
-
-[Service]
-User=prometheus
-Group=prometheus
-Type=simple
-ExecStart=/usr/local/bin/prometheus \
-  --config.file /etc/prometheus/prometheus.yml \
-  --storage.tsdb.path /var/lib/prometheus/ \
-  --web.console.templates=/etc/prometheus/consoles \
-  --web.console.libraries=/etc/prometheus/console_libraries \
-  --web.listen-address=:9090
-
-[Install]
-WantedBy=multi-user.target
+hostname -I | awk '{print $1}'
 ```
-
-### Configure Prometheus Scrape Jobs
-
-```bash
+Then edit the config:
+```
 sudo vi /etc/prometheus/prometheus.yml
 ```
-
-```yaml
+Replace with your actual IP (e.g. 172.31.45.5):
+```
 global:
   scrape_interval: 15s
 
@@ -762,44 +770,69 @@ scrape_configs:
 
   - job_name: 'node_exporter'
     static_configs:
-      - targets: ['<this-server-ip>:9100']
-
-  - job_name: 'kubernetes_nodes'
-    static_configs:
-      - targets: ['<eks-node-ip>:9100']
+      - targets: ['172.31.45.5:9100']
 ```
-
-> Replace `<this-server-ip>` and `<eks-node-ip>` with actual IPs.
-> Add the Kubernetes target after the EKS cluster is created.
-
-### Start All Monitoring Services
-
-```bash
-# Validate config first
+Start Everything
+```
 promtool check config /etc/prometheus/prometheus.yml
-# Expected: SUCCESS
 
 sudo systemctl daemon-reload
-sudo systemctl enable prometheus && sudo systemctl start prometheus
 sudo systemctl enable node_exporter && sudo systemctl start node_exporter
-
-# Verify
+sudo systemctl restart prometheus
+```
+# Verify all three are running
+```
 sudo systemctl status prometheus
 sudo systemctl status node_exporter
 ```
-
 ### Install Grafana
 
-```bash
-sudo apt install -y software-properties-common
-wget -q -O - https://packages.grafana.com/gpg.key | sudo apt-key add -
-echo "deb https://packages.grafana.com/oss/deb stable main" | \
-  sudo tee /etc/apt/sources.list.d/grafana.list
-sudo apt update
-sudo apt install grafana -y
+```
+sudo su
+cd ~
+
+# Download Grafana
+wget https://dl.grafana.com/enterprise/release/grafana-enterprise-11.1.4.linux-amd64.tar.gz
+tar -zxvf grafana-enterprise-11.1.4.linux-amd64.tar.gz
+
+# Move to /opt (important — don't keep in /root)
+sudo cp -r grafana-v11.1.4 /opt/grafana
+
+# Create grafana user
+sudo useradd --no-create-home --shell /bin/false grafana
+
+# Create required directories
+sudo mkdir -p /var/lib/grafana
+sudo mkdir -p /var/log/grafana
+
+# Set ownership
+sudo chown -R grafana:grafana /opt/grafana
+sudo chown -R grafana:grafana /var/lib/grafana
+sudo chown -R grafana:grafana /var/log/grafana
+```
+Create systemd service:
+```
+sudo tee /etc/systemd/system/grafana-server.service > /dev/null <<EOF
+[Unit]
+Description=Grafana
+After=network-online.target
+
+[Service]
+User=grafana
+ExecStart=/opt/grafana/bin/grafana-server \
+  --config=/opt/grafana/conf/defaults.ini \
+  --homepath=/opt/grafana
+
+[Install]
+WantedBy=multi-user.target
+EOF
+```
+```
+sudo systemctl daemon-reload
 sudo systemctl enable grafana-server
 sudo systemctl start grafana-server
 sudo systemctl status grafana-server
+sudo ss -tlnp | grep grafana
 ```
 
 Access at: `http://<server-ip>:3000` — Login: `admin` / `admin`
@@ -813,7 +846,7 @@ Access at: `http://<server-ip>:3000` — Login: `admin` / `admin`
 
 ### Import Dashboards (UI Steps)
 
-1. Grafana → **Dashboards → Import**
+1. Grafana → **Dashboards → Import a dashboard**
 2. Import ID `1860` → Load → Select Prometheus → **Import** _(Node Exporter)_
 
 -----------------------------------------------------------------------------------------------------------------------------------------------
