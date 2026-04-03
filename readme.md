@@ -100,13 +100,14 @@ CMD ["npm", "start"]
 
 ### Step 3 — Write Kubernetes Manifests
 
-Create a `kubernetes/` folder:
+Create a `Kubernetes/` folder:
 
 ```bash
-cd kubernetes
+cd Kubernetes
+nano deployment.yaml
 ```
 
-**`kubernetes/deployment.yml`**
+**`kubernetes/deployment.yaml`**
 
 ```yaml
 apiVersion: apps/v1
@@ -524,7 +525,8 @@ Now every push to `main` automatically triggers the pipeline.
 1. Jenkins → **New Item**
 2. Name: `zomato-pipeline` → **Pipeline** → OK
 3. Under Pipeline:
-   **Build Triggers** → check **GitHub hook trigger for GITScm polling**
+   **Build Triggers** → check
+    **GitHub hook trigger for GITScm polling**
    - Definition: `Pipeline script from SCM`
    - SCM: `Git`
    - Repository URL: `https://github.com/<your-username>/Zomato.git`
@@ -566,9 +568,9 @@ Required for IAM roles for service accounts — do not skip:
 
 ```bash
 eksctl utils associate-iam-oidc-provider \
-  --cluster Castro-Cluster \
-  --approve \
-  --region ap-northeast-1
+  --cluster cluster-1 \
+  --region ap-south-1 \
+  --approve
 ```
 
 
@@ -582,10 +584,10 @@ Expected: Two nodes with status `Ready`.
 
 
 ```bash
-git repo https://github.com/kamales113/Zomato-project.git
-cd Zomato
+git clone https://github.com/Kamales113/Zomato-CI-CD.git
+cd Zomato-CI-CD
 cd Kubernetes/
-kubectl apply -f deployment.yml
+kubectl apply -f deployment.yaml
 kubectl apply -f service.yaml
 kubectl apply -f hpa.yaml
 kubectl get pods
