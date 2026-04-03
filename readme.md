@@ -556,7 +556,7 @@ Now every push to `main` automatically triggers the pipeline.
 eksctl create cluster \
 --name cluster-1 \
 --region ap-south-1 \
---node-type t3.micro \
+--node-type c7i-flex.large \
 --nodes 2
 ```
 
