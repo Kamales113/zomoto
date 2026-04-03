@@ -205,7 +205,7 @@ pipeline {
         stage('Git Checkout') {
             steps {
                 git branch: 'main',
-                    url: 'https://github.com/kamales113/Zomato-project.git'
+                    url: 'https://github.com/Kamales113/Zomato-CI-CD.git'
             }
         }
 
@@ -260,9 +260,9 @@ pipeline {
         stage('Deploy to Kubernetes') {
             steps {
                 sh '''
-                kubectl apply -f kubernetes/deployment.yml
-                kubectl apply -f kubernetes/service.yml
-                kubectl apply -f kubernetes/hpa.yml
+                kubectl apply -f kubernetes/deployment.yaml
+                kubectl apply -f kubernetes/service.yaml
+                kubectl apply -f kubernetes/hpa.yaml
                 kubectl rollout status deployment/zomato
                 '''
             }
@@ -278,6 +278,7 @@ pipeline {
         }
     }
 }
+
 ```
 
 > Replace `<your-dockerhub-username>` and `<your-username>` with your actual values.
