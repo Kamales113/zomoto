@@ -128,7 +128,7 @@ spec:
     spec:
       containers:
       - name: zomato
-        image: kastrov/zomato:latest
+        image: kamales113/zomato:latest
         ports:
         - containerPort: 3000
 ```
@@ -484,7 +484,7 @@ Go to: **Manage Jenkins → Credentials → Global → Add Credentials**
 After the EKS cluster is created (Section 8), run this on the EC2 to configure kubectl for Jenkins:
 
 ```bash
-aws eks update-kubeconfig --name Castro-Cluster --region ap-northeast-1
+aws eks update-kubeconfig --name cluster-1 --region ap-south-1
 # Copy the kubeconfig to Jenkins home
 sudo cp ~/.kube/config /var/lib/jenkins/.kube/config
 sudo chown jenkins:jenkins /var/lib/jenkins/.kube/config
@@ -802,12 +802,10 @@ docker images
 
 ```bash
 # Delete node group first
-eksctl delete nodegroup \
-  --cluster=Castro-Cluster \
-  --name=Castro-demo-NG
+eksctl delete nodegroup --cluster=cluster-1 --name=ng-medium --region=ap-south-1
 
 # Then delete cluster
-eksctl delete cluster --name=Castro-Cluster
+eksctl delete cluster --name=cluster-1 --region=ap-south-1
 ```
 
 **Manual step — AWS Console:**
