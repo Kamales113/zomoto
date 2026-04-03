@@ -54,7 +54,7 @@ Deploy to AWS EKS (Kubernetes)
 Prometheus + Grafana Monitoring
 ```
 
----
+-----------------------------------------------------------------------------------------------------------------------------------------------
 
 ## 2. Required Files You Must Write
 
@@ -181,6 +181,7 @@ spec:
 Create `Jenkinsfile` in the root of the project:
 
 ```groovy
+
 pipeline {
     agent any
 
@@ -260,9 +261,9 @@ pipeline {
         stage('Deploy to Kubernetes') {
             steps {
                 sh '''
-                kubectl apply -f kubernetes/deployment.yaml
-                kubectl apply -f kubernetes/service.yaml
-                kubectl apply -f kubernetes/hpa.yaml
+                kubectl apply -f Kubernetes/deployment.yaml
+                kubectl apply -f Kubernetes/service.yaml
+                kubectl apply -f Kubernetes/hpa.yaml
                 kubectl rollout status deployment/zomato
                 '''
             }
@@ -279,6 +280,7 @@ pipeline {
     }
 }
 
+
 ```
 
 > Replace `<your-dockerhub-username>` and `<your-username>` with your actual values.
@@ -293,7 +295,7 @@ git commit -m "Add Dockerfile, Kubernetes manifests, and Jenkinsfile"
 git push origin main
 ```
 
----
+-----------------------------------------------------------------------------------------------------------------------------------------------
 
 ## 3. AWS Infrastructure Setup
 
@@ -355,7 +357,7 @@ Enter when prompted:
 
 **Verify:** `aws --version`
 
----
+------------------------------------------------------------------------------------------------------------------------------------------------
 
 ## 4. Tool Installation on EC2
 
@@ -437,7 +439,7 @@ sudo mv /tmp/eksctl /usr/local/bin
 eksctl version
 ```
 
----
+-----------------------------------------------------------------------------------------------------------------------------------------------------
 
 ## 5. Jenkins Configuration
 
@@ -491,7 +493,7 @@ sudo cp ~/.kube/config /var/lib/jenkins/.kube/config
 sudo chown jenkins:jenkins /var/lib/jenkins/.kube/config
 ```
 
----
+---------------------------------------------------------------------------------------------------------------------------------------------------
 
 ## 6. GitHub Webhook Setup
 
@@ -517,7 +519,7 @@ In your Jenkins Pipeline job settings:
 
 Now every push to `main` automatically triggers the pipeline.
 
----
+-------------------------------------------------------------------------------------------------------------------------------------------------
 
 ## 7. Jenkins CI/CD Pipeline
 
@@ -547,7 +549,7 @@ Now every push to `main` automatically triggers the pipeline.
 | 5 | Tag & Push | Pushes `<username>/zomato:latest` to DockerHub | ~2 min |
 | 6 | Deploy to Kubernetes | Applies manifests to EKS | ~1 min |
 
----
+--------------------------------------------------------------------------------------------------------------------------------------
 
 ## 8. AWS EKS Kubernetes Deployment
 
@@ -603,9 +605,56 @@ kubectl get hpa
 
 Expected output shows `zomato-hpa` with min 2 / max 6 replicas.
 
+and finally run the jenkins and Build now
+if fail
+Fix Step by Step
+Step 1 — On your EC2, update kubeconfig and copy it to Jenkins:
+    bash# Update kubeconfig for your cluster
+```
+# Update kubeconfig for your cluster
+    aws eks update-kubeconfig --name cluster-1 --region ap-south-1
+    
+# Verify it points to EKS (should show EKS API server URL, not Jenkins)
+    kubectl config view
+    
+# Create .kube dir for Jenkins if it doesn't exist
+    sudo mkdir -p /var/lib/jenkins/.kube
+    
+# Copy config to Jenkins
+    sudo cp ~/.kube/config /var/lib/jenkins/.kube/config
+    
+# Give Jenkins ownership
+    sudo chown jenkins:jenkins /var/lib/jenkins/.kube/config
+    sudo chmod 600 /var/lib/jenkins/.kube/config
+# Step 2 — Verify Jenkins can reach EKS:
+# bash
+    sudo -u jenkins kubectl get nodes
+#Expected: your two EKS nodes listed as Ready. If this works, the pipeline will work.
 
-
----
+```
+is this fail run this 
+```
+# Create AWS credentials directory for Jenkins
+    sudo mkdir -p /var/lib/jenkins/.aws
+    
+# Copy your AWS credentials to Jenkins
+    sudo cp ~/.aws/credentials /var/lib/jenkins/.aws/credentials
+    sudo cp ~/.aws/config /var/lib/jenkins/.aws/config
+    
+# Give Jenkins ownership
+    sudo chown -R jenkins:jenkins /var/lib/jenkins/.aws
+    sudo chmod 600 /var/lib/jenkins/.aws/credentials
+# Verify it works:
+# bash
+    sudo -u jenkins aws sts get-caller-identity
+# Expected: your account ID and IAM user details.
+# Then:
+# bash
+    sudo -u jenkins kubectl get nodes
+# Expected: both EKS nodes showing Ready.    
+    sudo -u jenkins kubectl get nodes
+```
+----------------------------------------------------------------------------------------------------------------------------------------
 
 ## 9. Monitoring — Prometheus & Grafana
 
@@ -767,7 +816,7 @@ Access at: `http://<server-ip>:3000` — Login: `admin` / `admin`
 1. Grafana → **Dashboards → Import**
 2. Import ID `1860` → Load → Select Prometheus → **Import** _(Node Exporter)_
 
----
+-----------------------------------------------------------------------------------------------------------------------------------------------
 
 ## 10. Verification & Access URLs
 
